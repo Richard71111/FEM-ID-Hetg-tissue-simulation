@@ -1,93 +1,116 @@
-function topology = build_topology(cell_mask)
-%BUILD_TOPOLOGY Convert an occupancy array into cells and junctions.
-% Build topological node and edge structure.
-% Input: logical/numeric 1-D, 2-D, or 3-D occupancy array.
-% Example 5 cell network:
-%     0, 1, 0;
-%     1, 1, 1;
-%     0, 1, 0
-% 1 represent cell/ 0 represent empty
-% 
-% Important parameters
-% 
-% junction_cells: Mark down the connection order
-% Example:
-%          2     3     1     3
-%          3     4     3     5
-%     Cell 2 connect to cell 3, cell 3 connect to cell 4 .etc. read by col
-% junction_axis: Mark down connection orientation
-% Example:
-%          [1 1 2 2]
-%     Cell (2,3) (3,4) is first dim connection(connect through col)
-% 
-% Output: topology with cell coordinates and a 2-by-Njunction edge list.
+function topology = build_topology(adjacency_matrix, cell_coordinates, cell_port_count)
+%BUILD_TOPOLOGY Convert a cell adjacency matrix into graph metadata.
+% Inputs: symmetric 0/1 adjacency matrix, optional plotting coordinates,
+% and optional total membrane-port count for each cell.
+% Output: topology with cells, junctions, graph ports, and coordinates.
 
-if ndims(cell_mask) > 3
-    error("The topology array must have at most three dimensions.");
+if ~ismatrix(adjacency_matrix) || ...
+        size(adjacency_matrix, 1) ~= size(adjacency_matrix, 2)
+    error("adjacency_matrix must be a square matrix.");
+end
+if any(~isfinite(adjacency_matrix), "all") || ...
+        any(adjacency_matrix(:) ~= 0 & adjacency_matrix(:) ~= 1)
+    error("adjacency_matrix must contain only finite 0 and 1 values.");
+end
+if any(diag(adjacency_matrix) ~= 0)
+    error("adjacency_matrix must have a zero diagonal.");
+end
+if ~isequal(adjacency_matrix, adjacency_matrix')
+    error("adjacency_matrix must be symmetric for an undirected tissue graph.");
 end
 
-cell_mask = logical(cell_mask);
-array_size = size(cell_mask); % dimension array size
-array_size(end + 1:3) = 1; % make mask to 3D matrix [1,2] -> [1,2,1]
-cell_mask = reshape(cell_mask, array_size);
-
-if ~any(cell_mask, "all")
-    error("The topology must contain at least one occupied cell.");
+adjacency_matrix = logical(adjacency_matrix);
+Ncell = size(adjacency_matrix, 1);
+if Ncell == 0
+    error("adjacency_matrix must contain at least one cell.");
 end
+component = conncomp(graph(adjacency_matrix))';
+is_connected = all(component == component(1));
 
-active_dims = find(array_size > 1);
-spatial_dimension = max(1, numel(active_dims));
+[cell_1, cell_2] = find(triu(adjacency_matrix, 1));
+junction_cells = [cell_1'; cell_2'];
+Njunction = numel(cell_1);
+degree = full(sum(adjacency_matrix, 2));
 
-cell_id = zeros(array_size);
-cell_id(cell_mask) = 1:nnz(cell_mask);
-Ncell = nnz(cell_mask);
-
-[sub_1, sub_2, sub_3] = ind2sub(array_size, find(cell_mask));
-all_coordinates = [sub_1(:), sub_2(:), sub_3(:)];
-if isempty(active_dims)
-    coordinates = zeros(Ncell, 1);
+if nargin < 3 || isempty(cell_port_count)
+    cell_port_count = max(2, degree);
+elseif isscalar(cell_port_count)
+    cell_port_count = repmat(cell_port_count, Ncell, 1);
 else
-    coordinates = all_coordinates(:, active_dims);
+    cell_port_count = cell_port_count(:);
+end
+if numel(cell_port_count) ~= Ncell || ...
+        any(cell_port_count < degree) || ...
+        any(cell_port_count < 1) || ...
+        any(cell_port_count ~= round(cell_port_count))
+    error("cell_port_count must contain positive integers not smaller than cell degree.");
 end
 
-junction_cells = zeros(2, 0);
-junction_axis = zeros(1, 0);
-% Face order is [-axis 1, +axis 1, -axis 2, +axis 2, ...].
-junction_faces = zeros(2, 0);
-
-for array_dim = active_dims
-    first = {':', ':', ':'};
-    second = first;
-    first{array_dim} = 1:(array_size(array_dim) - 1);
-    second{array_dim} = 2:array_size(array_dim);
-
-    cell_1 = cell_id(first{:});
-    cell_2 = cell_id(second{:});
-    connected = cell_1 > 0 & cell_2 > 0;
-
-    junction_cells = [junction_cells, ...
-        [reshape(cell_1(connected), 1, []); ...
-        reshape(cell_2(connected), 1, [])]];
-    local_axis = find(active_dims == array_dim);
-    junction_axis = [junction_axis, ...
-        local_axis * ones(1, nnz(connected))];
-    junction_faces = [junction_faces, ...
-        [(2 * local_axis) * ones(1, nnz(connected)); ...
-        (2 * local_axis - 1) * ones(1, nnz(connected))]];
+junction_ports = zeros(2, Njunction);
+next_port = zeros(Ncell, 1);
+for junction = 1:Njunction
+    for side = 1:2
+        cell_number = junction_cells(side, junction);
+        next_port(cell_number) = next_port(cell_number) + 1;
+        junction_ports(side, junction) = next_port(cell_number);
+    end
 end
 
-Njunction = size(junction_cells, 2);
-degree = accumarray(junction_cells(:), 1, [Ncell, 1]);
+Nports = max(cell_port_count);
+boundary_mask = false(Nports, Ncell);
+for cell_number = 1:Ncell
+    boundary_mask(1:cell_port_count(cell_number), cell_number) = true;
+end
+for junction = 1:Njunction
+    for side = 1:2
+        boundary_mask( ...
+            junction_ports(side, junction), ...
+            junction_cells(side, junction)) = false;
+    end
+end
 
-topology.dimension = spatial_dimension;
-topology.mask = cell_mask;
-topology.array_size = array_size;
-topology.cell_id = cell_id;
-topology.coordinates = coordinates;
+if nargin < 2 || isempty(cell_coordinates)
+    if Ncell == 1
+        cell_coordinates = 0;
+    elseif is_connected && Njunction == Ncell - 1 && all(degree <= 2)
+        path_order = zeros(Ncell, 1);
+        current_cell = find(degree == 1, 1);
+        previous_cell = 0;
+        for position = 1:Ncell
+            path_order(position) = current_cell;
+            next_cells = find(adjacency_matrix(current_cell, :));
+            next_cells(next_cells == previous_cell) = [];
+            if position < Ncell
+                previous_cell = current_cell;
+                current_cell = next_cells(1);
+            end
+        end
+        cell_coordinates = zeros(Ncell, 1);
+        cell_coordinates(path_order) = (0:Ncell - 1)';
+    else
+        angle = 2 * pi * (0:Ncell - 1)' / Ncell;
+        cell_coordinates = [cos(angle), sin(angle)];
+    end
+else
+    if size(cell_coordinates, 1) ~= Ncell || ...
+            size(cell_coordinates, 2) < 1 || ...
+            size(cell_coordinates, 2) > 3 || ...
+            any(~isfinite(cell_coordinates), "all")
+        error("cell_coordinates must be a finite Ncell-by-1, 2, or 3 matrix.");
+    end
+end
+
+topology.dimension = size(cell_coordinates, 2);
+topology.adjacency = adjacency_matrix;
+topology.coordinates = cell_coordinates;
 topology.Ncell = Ncell;
 topology.Njunction = Njunction;
 topology.junction_cells = junction_cells;
-topology.junction_axis = junction_axis;
-topology.junction_faces = junction_faces;
+topology.junction_ports = junction_ports;
+topology.junction_faces = junction_ports;
 topology.degree = degree;
+topology.component = component;
+topology.cell_port_count = cell_port_count;
+topology.Nports = Nports;
+topology.boundary_mask = boundary_mask;
 end

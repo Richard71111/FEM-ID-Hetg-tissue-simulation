@@ -7,7 +7,12 @@ config_folder = fileparts(mfilename("fullpath"));
 project_folder = fileparts(config_folder);
 
 %% Topology
-cfg.topology = [1, 1, 1];  % Occupied cells in a 1-D, 2-D, or 3-D array.
+cfg.adjacency_matrix = [ ...
+    0, 1, 0; ...
+    1, 0, 1; ...
+    0, 1, 0];  % Symmetric cell-cell connectivity matrix.
+cfg.cell_coordinates = [];  % Optional Ncell-by-1, 2, or 3 plotting coordinates.
+cfg.cell_port_count = 2;  % Scalar/vector total ports; empty uses max(2, degree).
 cfg.junction_mesh = 1;  % Scalar or one mesh index for each junction.
 
 %% FEM mesh files
@@ -54,8 +59,8 @@ cfg.Temp = 310;  % K.
 cfg.BCL = 1000;  % Basic cycle length, ms.
 cfg.nbeats = 1;
 cfg.T = [];  % Total time, ms; empty uses BCL*nbeats.
-cfg.dt = 0.01;  % Voltage time step, ms.
-cfg.dtS = cfg.dt;  % Cleft concentration time step, ms.
+cfg.dt = 0.1;  % Voltage time step, ms.
+cfg.dtS = cfg.dt/5;  % Cleft concentration time step, ms.
 cfg.sample_dt = 0.1;  % Output sampling interval, ms.
 cfg.stim_cell = 1;  % Cell receiving the stimulus.
 cfg.stim_dur = [];

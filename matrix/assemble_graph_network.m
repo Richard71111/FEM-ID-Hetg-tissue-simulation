@@ -4,7 +4,7 @@ function network = assemble_graph_network(cfg, topology, model)
 %     layout: flat global index structure.
 %         .cell: 1D cell global index [1,2,...,Ncell]
 %         .ID: tensorized global intracellular ID index [M, 2, Njunction]
-%         .boundary: one lumped outer-disc node [Nface, Ncell], zero if connected
+%         .boundary: one lumped outer-disc node [Nport, Ncell], zero if connected
 %         .cleft: tensorized global cleft node index [M, Njunction]
 % Inputs: cfg, graph topology, and ionic model.
 % Output: network containing physical tensors and hidden solver operators.
@@ -100,17 +100,10 @@ layout.ID = reshape( ...
     next_node + (1:M * 2 * Njunction), M, 2, Njunction);
 next_node = next_node + M * 2 * Njunction;
 
-Nfaces = 2 * topology.dimension;
-boundary_mask = true(Nfaces, Ncell);
-for n_junction = 1:Njunction
-    for side = 1:2
-        cell_number = topology.junction_cells(side, n_junction);
-        face_number = topology.junction_faces(side, n_junction);
-        boundary_mask(face_number, cell_number) = false;
-    end
-end
+Nports = topology.Nports;
+boundary_mask = topology.boundary_mask;
 
-layout.boundary = zeros(Nfaces, Ncell);
+layout.boundary = zeros(Nports, Ncell);
 Nboundary = nnz(boundary_mask);
 layout.boundary(boundary_mask) = next_node + (1:Nboundary);
 next_node = next_node + Nboundary;
@@ -181,7 +174,7 @@ Gmat = incidence' * spdiags(edge_g, 0, Nedge, Nedge) * incidence;
 patch.axial = reshape(1:Ncell, 1, Ncell);
 patch.ID = reshape( ...
     Ncell + (1:M * 2 * Njunction), M, 2, Njunction);
-patch.boundary = zeros(Nfaces, Ncell);
+patch.boundary = zeros(Nports, Ncell);
 patch.boundary(boundary_mask) = ...
     Ncell + M * 2 * Njunction + (1:Nboundary);
 Npatches = Ncell + M * 2 * Njunction + Nboundary;
@@ -214,31 +207,27 @@ membrane_incidence = sparse( ...
 
 Aax = 2 * pi * cfg.r * cfg.L;
 ID_area = zeros(M, 2, Njunction);
-face_area = zeros(Nfaces, Ncell);
+port_area = zeros(Nports, Ncell);
 for n_junction = 1:Njunction
     for side = 1:2
         cell_number = topology.junction_cells(side, n_junction);
-        face_number = topology.junction_faces(side, n_junction);
+        port_number = topology.junction_ports(side, n_junction);
         ID_area(:, side, n_junction) = mesh.area(:, n_junction);
-        face_area(face_number, cell_number) = sum(mesh.area(:, n_junction));
+        port_area(port_number, cell_number) = sum(mesh.area(:, n_junction));
     end
 end
 
 reference_face_area = sum(first_data.FEM_data.partition_surface);
-boundary_area = zeros(Nfaces, Ncell);
-for boundary_number = 1:Nboundary
-    face_number = boundary_face(boundary_number);
-    cell_number = boundary_cell(boundary_number);
-    if mod(face_number, 2) == 1
-        opposite_face = face_number + 1;
+boundary_area = zeros(Nports, Ncell);
+for cell_number = 1:Ncell
+    connected_area = port_area(port_area(:, cell_number) > 0, cell_number);
+    if isempty(connected_area)
+        local_boundary_area = reference_face_area;
     else
-        opposite_face = face_number - 1;
+        local_boundary_area = mean(connected_area);
     end
-    boundary_area(face_number, cell_number) = ...
-        face_area(opposite_face, cell_number);
-    if boundary_area(face_number, cell_number) == 0
-        boundary_area(face_number, cell_number) = reference_face_area;
-    end
+    boundary_area(boundary_mask(:, cell_number), cell_number) = ...
+        local_boundary_area;
 end
 
 patch_capacitance = cfg.Cm * [ ...
@@ -258,7 +247,8 @@ f_I(:, patch.axial) = repmat(1 - model.loc_vec(:), 1, Ncell);
 for n_junction = 1:Njunction
     for side = 1:2
         cell_number = topology.junction_cells(side, n_junction);
-        current_weight = mesh.current_weight(:, :, n_junction) / Nfaces;
+        current_weight = mesh.current_weight(:, :, n_junction) / ...
+            topology.cell_port_count(cell_number);
         f_I(:, patch.ID(:, side, n_junction)) = current_weight';
         patch_cell(patch.ID(:, side, n_junction)) = cell_number;
     end
@@ -268,8 +258,10 @@ for boundary_number = 1:Nboundary
     patch_number_boundary = ...
         patch.boundary(boundary_face(boundary_number), ...
         boundary_cell(boundary_number));
-    f_I(:, patch_number_boundary) = model.loc_vec(:) / Nfaces;
-    patch_cell(patch_number_boundary) = boundary_cell(boundary_number);
+    cell_number = boundary_cell(boundary_number);
+    f_I(:, patch_number_boundary) = model.loc_vec(:) / ...
+        topology.cell_port_count(cell_number);
+    patch_cell(patch_number_boundary) = cell_number;
 end
 
 patch.cleft_linear = [ ...
@@ -281,7 +273,8 @@ patch.cell = patch_cell;
 network.Nnodes = Nnodes;
 network.Npatches = Npatches;
 network.M = M;
-network.Nfaces = Nfaces;
+network.Nports = Nports;
+network.Nfaces = Nports;
 network.boundary_mask = boundary_mask;
 network.layout = layout;
 network.patch = patch;

@@ -1,5 +1,5 @@
 %% Run a graph/tensor cardiac simulation
-% Edit the occupancy array and junction mesh list below, then run this file.
+% Edit the adjacency matrix and junction mesh list below, then run this file.
 
 clear;
 clc;
@@ -11,7 +11,13 @@ addpath(fullfile(project_folder, "config"));
 cfg = default_config();
 
 %% A three-cell 1-D cable
-cfg.topology = [1,1,1];
+cfg.adjacency_matrix = [
+    0, 1, 0;
+    1, 0, 1;
+    0, 1, 0
+];
+cfg.cell_coordinates = (1:3)';  % Used only to draw the graph.
+cfg.cell_port_count = 2;  % Two membrane ports per cell for a 1-D cable.
 
 % Junction ordering is stored in result.topology.junction_cells.
 cfg.junction_mesh = 1;
@@ -21,7 +27,7 @@ cfg.stim_cell = 1;
 cfg.nbeats = 2;
 cfg.stim_amp = 50;
 cfg.T = cfg.BCL * cfg.nbeats;  % Plot one complete action potential without a second stimulus.
-% cfg.clamp_flag = true(4, 1);
+% cfg.clamp_flag = false(4, 1);
 cfg.show_progress = true;
 cfg.make_plots = false;
 
@@ -30,8 +36,6 @@ result = run_graph_simulation(cfg);
 toc
 
 %% Plots
-cfg = default_config();
-
 time = result.time;
 phi_axial = result.Vm_cell;
 
@@ -59,10 +63,17 @@ colorbar;
 view(45, 30);
 
 file_name_general = sprintf("axial_phi_%s_BCL_%d_nbeats_%d_Ncell_%d_general.png", ...
-    cfg.mesh_files(1),cfg.BCL,cfg.nbeats,numel(cfg.topology));
+    cfg.mesh_files(1),cfg.BCL,cfg.nbeats,result.topology.Ncell);
 
 file_name_3D = sprintf("axial_phi_%s_BCL_%d_nbeats_%d_Ncell_%d_3D.png", ...
-    cfg.mesh_files(1),cfg.BCL,cfg.nbeats,numel(cfg.topology));
+    cfg.mesh_files(1),cfg.BCL,cfg.nbeats,result.topology.Ncell);
 
 saveas(fig1,fullfile(cfg.save_plot_path,file_name_general))
 saveas(fig2,fullfile(cfg.save_plot_path,file_name_3D))
+
+% Save data
+save(fullfile(cfg.save_data_path, "new_model.mat"), ...
+    "time", "phi_axial");
+%% compare 2 mode
+old_model = load(fullfile(cfg.save_data_path, "old_model.mat"));
+new_model = load(fullfile(cfg.save_data_path, "new_model.mat"));

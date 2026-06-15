@@ -17,7 +17,16 @@ if isempty(cfg.T)
     cfg.T = cfg.BCL * cfg.nbeats;
 end
 
-topology = build_topology(cfg.topology);
+cell_coordinates = [];
+cell_port_count = [];
+if isfield(cfg, "cell_coordinates")
+    cell_coordinates = cfg.cell_coordinates;
+end
+if isfield(cfg, "cell_port_count")
+    cell_port_count = cfg.cell_port_count;
+end
+topology = build_topology( ...
+    cfg.adjacency_matrix, cell_coordinates, cell_port_count);
 if cfg.stim_cell < 1 || cfg.stim_cell > topology.Ncell
     error("stim_cell must be between 1 and Ncell.");
 end

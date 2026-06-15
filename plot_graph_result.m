@@ -28,8 +28,8 @@ if topology.dimension == 1
     text(x, y, compose("  %d", 1:topology.Ncell));
     axis padded;
 elseif topology.dimension == 2
-    x = coordinates(:, 2);
-    y = -coordinates(:, 1);
+    x = coordinates(:, 1);
+    y = coordinates(:, 2);
     for j = 1:topology.Njunction
         cells = edges(:, j);
         plot(x(cells), y(cells), "k-", "LineWidth", 1.5);
@@ -38,8 +38,8 @@ elseif topology.dimension == 2
     text(x, y, compose("  %d", 1:topology.Ncell));
     axis equal padded;
 else
-    x = coordinates(:, 2);
-    y = -coordinates(:, 1);
+    x = coordinates(:, 1);
+    y = coordinates(:, 2);
     z = coordinates(:, 3);
     for j = 1:topology.Njunction
         cells = edges(:, j);
