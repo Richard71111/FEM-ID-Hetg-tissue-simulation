@@ -41,10 +41,32 @@ RTF = cfg.R * cfg.Temp / cfg.F;
 system_matrix = network.G + network.Cm / cfg.dt;
 solver = decomposition(system_matrix, "lu");
 
+%% Axial-to-ID coupling used for the cleft current Icleft
+% Each junction has two disc faces (pre- and post-junctional), each carrying
+% its own axial coupling current into the ID patches of the connected cell:
+%   Icleft(side, junction) = (gmyo/M) * sum_{j=1..M} (phi_cell - phi_ID_{j,side})
+% Columns of icleft_cell / icleft_ID_idx run junction-major, side-minor so
+% that reshape(.,2,Njunction) maps row = side, column = junction.
+gmyo = network.gmyo;
+cell_index = layout.cell(:);            % Ncell-by-1 axial node indices.
+side_count = 2 * Njunction;
+icleft_cell = zeros(1, side_count);     % Owner cell of each junction side.
+icleft_ID_idx = zeros(M, max(side_count, 1));  % ID node indices per side.
+col = 0;
+for j = 1:Njunction
+    for side = 1:2
+        col = col + 1;
+        icleft_cell(col) = topology.junction_cells(side, j);
+        icleft_ID_idx(:, col) = layout.ID(:, side, j);
+    end
+end
+
 %% Sampled output
 max_samples = ceil(cfg.T / cfg.sample_dt) + 2;
 time = nan(1, max_samples);
 Vm_cell = nan(Ncell, max_samples);
+phi_axial = nan(Ncell, max_samples);
+Icleft = nan(2, Njunction, max_samples);   % Row 1 = pre-junctional side, row 2 = post-junctional side.
 Vm_ID_mean = nan(2, Njunction, max_samples);
 phi_cleft_mean = nan(Njunction, max_samples);
 S_cleft_mean = nan(4, Njunction, max_samples);
@@ -53,6 +75,9 @@ Vm = network.Am * phi;
 count = 1;
 time(count) = 0;
 Vm_cell(:, count) = Vm(patch.axial);
+phi_axial(:, count) = phi(cell_index);
+Icleft(:, :, count) = compute_icleft(phi, ...
+    icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
 if Njunction > 0
     Vm_ID = reshape(Vm(patch.ID(:)), M, 2, Njunction);
     Vm_ID_mean(:, :, count) = reshape(mean(Vm_ID, 1), 2, Njunction);
@@ -151,6 +176,9 @@ while ti < cfg.T
         Vm = network.Am * phi;
         time(count) = ti;
         Vm_cell(:, count) = Vm(patch.axial);
+        phi_axial(:, count) = phi(cell_index);
+        Icleft(:, :, count) = compute_icleft(phi, ...
+            icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
         if Njunction > 0
             Vm_ID = reshape(Vm(patch.ID(:)), M, 2, Njunction);
             Vm_ID_mean(:, :, count) = ...
@@ -171,6 +199,8 @@ end
 
 result.time = time(1:count);
 result.Vm_cell = Vm_cell(:, 1:count);
+result.phi_axial = phi_axial(:, 1:count);   % Axial node potential, Ncell-by-Nt.
+result.Icleft = Icleft(:, :, 1:count);      % Cleft current per junction side, 2-by-Njunction-by-Nt.
 result.Vm_ID_mean = Vm_ID_mean(:, :, 1:count);
 result.phi_cleft_mean = phi_cleft_mean(:, 1:count);
 result.S_cleft_mean = S_cleft_mean(:, :, 1:count);
@@ -183,4 +213,22 @@ result.final.phi_cleft = reshape(phi(layout.cleft), M, Njunction);
 result.final.S_cleft = S_cleft;
 result.final.Gstate = Gstate;
 result.final.Iall = Iall;
+end
+
+function Ic = compute_icleft(phi, icleft_cell, icleft_ID_idx, gmyo, M, Njunction)
+%COMPUTE_ICLEFT Axial-to-ID (cleft) current for each junction side.
+% Every junction has two disc faces, so two currents:
+%   Ic(1, junction) = (gmyo/M) * sum_{j=1..M} (phi_preCell  - phi_ID_pre,j )
+%   Ic(2, junction) = (gmyo/M) * sum_{j=1..M} (phi_postCell - phi_ID_post,j)
+% Row 1 is the pre-junctional side (first cell of the edge), row 2 the
+% post-junctional side (second cell). icleft_cell / icleft_ID_idx columns
+% are ordered (junction-major, side-minor) to match reshape(.,2,Njunction).
+Ic = zeros(2, Njunction);
+if Njunction == 0
+    return;
+end
+pc = phi(icleft_cell(:)).';                      % 1-by-side_count axial potential of each side.
+sum_phi_ID = sum(phi(icleft_ID_idx), 1);         % 1-by-side_count sum of ID potentials.
+contrib = (gmyo / M) * (M * pc - sum_phi_ID);    % 1-by-side_count.
+Ic = reshape(contrib, 2, Njunction);             % Row = side, column = junction.
 end
