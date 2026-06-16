@@ -36,11 +36,17 @@ result = run_graph_simulation(cfg);
 toc
 
 %% Save data
-% phi_axial: axial potential, Ncell-by-Nt.
-% Icleft:    cleft (axial) current per cell, Ncell-by-Nt.
-time = result.time;
-phi_axial = result.phi_axial;
-Icleft = result.Icleft;
-
-save(fullfile(cfg.save_data_path, "new_model.mat"), ...
-    "time", "phi_axial", "Icleft");
+% Only the retained variables are stored:
+%   phi_axial : axial (intracellular) potential, Ncell-by-Nt.
+%   Gstate    : ionic state vector incl. intracellular concentration,
+%               (Nstate*Npatches)-by-Nt.
+%   Icleft    : cleft (axial-to-ID) current per junction side, 2-by-Njunction-by-Nt.
+%   S_cleft   : cleft (extracellular) concentration, 4-by-M-by-Njunction-by-Nt.
+% time = result.time;
+% phi_axial = result.phi_axial;
+% Gstate = result.Gstate;
+% Icleft = result.Icleft;
+% S_cleft = result.S_cleft;
+% 
+% save(fullfile(cfg.save_data_path, "new_model.mat"), ...
+%     "time", "phi_axial", "Gstate", "Icleft", "S_cleft");

@@ -155,17 +155,49 @@ cfg.clamp_flag = true(4, 1);
 
 ## Results
 
+Only the retained physical variables are stored, each as a time history
+sampled by the cross-step rule (see Cross-Step Saving below):
+
 ```matlab
-result.topology.adjacency
-result.topology.junction_cells
-result.topology.junction_ports
-result.final.phi_cell
-result.final.phi_ID
-result.final.phi_boundary
-result.final.phi_cleft
-result.final.S_cleft
+result.time        % 1-by-Nt sample times, ms.
+result.phi_axial   % Ncell-by-Nt axial (intracellular) potential, mV.
+result.Gstate      % (Nstate*Npatches)-by-Nt ionic state vector.
+result.Icleft      % 2-by-Njunction-by-Nt cleft current per junction side.
+result.S_cleft     % 4-by-M-by-Njunction-by-Nt cleft concentration.
 ```
 
-The sparse flat vector remains internal to
-`matrix/assemble_graph_network.m`; cell and junction results are exposed
-with stable tensor dimensions.
+Intracellular concentrations (e.g. Na_i, K_i, Ca_i in ORd11) are state
+variables inside `result.Gstate`, so they are not saved separately. The
+extracellular cleft concentration is saved as `result.S_cleft`. Averaged
+diagnostics (`phi_*_mean`, `Vm_cell`, and similar) are no longer stored.
+
+## Cross-Step Saving
+
+Outputs are saved every `cfg.save_every` accepted time steps, plus the
+initial state and the final step:
+
+```matlab
+cfg.save_every = 10;   % Store outputs once every 10 steps.
+```
+
+This is a step count, not a time interval, matching the original 1-D
+source code.
+
+## Adaptive Time Step
+
+A dual time step matches the original source: a fine step within the first
+`cfg.twin` ms after each beat onset (the upstroke), and a coarse step for
+the rest of each cycle.
+
+```matlab
+cfg.adaptive_dt = true;  % false uses the fine step cfg.dt everywhere.
+cfg.twin = 50;           % Fine-step window after each beat, ms.
+cfg.dt   = 0.01;         % Fine voltage step (within twin), ms.
+cfg.dt2  = 0.1;          % Coarse voltage step (rest of cycle), ms.
+cfg.dtS  = cfg.dt/5;     % Fine cleft concentration step.
+cfg.dtS2 = cfg.dt2/10;   % Coarse cleft concentration step.
+```
+
+Selection is `mod(t, BCL) < twin`. The system factorization for each step is
+precomputed once and reused, so switching steps does not refactor the
+system each iteration.

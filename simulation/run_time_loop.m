@@ -1,7 +1,25 @@
 function result = run_time_loop(cfg, topology, model, network)
 %RUN_TIME_LOOP Advance ionic states, cleft concentrations, and potentials.
 % Inputs: cfg, topology, ionic model, and assembled graph network.
-% Output: sampled histories and final values in physical tensor form.
+% Output: sampled time histories of the retained physical variables.
+%
+% Adaptive (dual) time step (cfg.adaptive_dt): the fine step cfg.dt is used
+% within the first cfg.twin ms after each beat onset and the coarse step
+% cfg.dt2 for the rest of the cycle, matching the original 1-D source.
+%
+% Cross-step saving (cfg.save_every): outputs are stored every N accepted
+% time steps (plus the initial state and the final step), instead of on a
+% fixed time interval. This mirrors the step-based saving of the original
+% 1-D source code.
+%
+% Saved time histories (everything else is dropped):
+%   time        1-by-Nt sample times, ms.
+%   phi_axial   Ncell-by-Nt axial (intracellular) node potential, mV.
+%   Gstate      (Nstate*Npatches)-by-Nt ionic state vector. The ORd11/LR1/
+%               Court98 intracellular concentrations live inside this state,
+%               so intracellular concentration is NOT saved separately.
+%   Icleft      2-by-Njunction-by-Nt cleft (axial-to-ID) current per side.
+%   S_cleft     4-by-M-by-Njunction-by-Nt cleft (extracellular) concentration.
 
 Ncell = topology.Ncell;
 Njunction = topology.Njunction;
@@ -36,10 +54,26 @@ for state_number = 1:model.Nstate
     Gstate(rows) = model.x0(state_number + 1);
 end
 
-Nsplit = max(1, round(cfg.dt / cfg.dtS));
 RTF = cfg.R * cfg.Temp / cfg.F;
-system_matrix = network.G + network.Cm / cfg.dt;
-solver = decomposition(system_matrix, "lu");
+
+% Time-step setup (adaptive dual step, matching the original 1-D source).
+% Within the first cfg.twin ms after each beat onset the solver uses the fine
+% step cfg.dt; for the rest of the cycle it uses the coarse step cfg.dt2.
+% The coefficient factorization for each step is precomputed once and reused,
+% so switching steps does not refactor the system every iteration.
+use_adaptive = isfield(cfg, "adaptive_dt") && cfg.adaptive_dt;
+dt_fine = cfg.dt;
+Nsplit_fine = max(1, round(cfg.dt / cfg.dtS));
+solver_fine = decomposition(network.G + network.Cm / dt_fine, "lu");
+if use_adaptive
+    dt_coarse = cfg.dt2;
+    Nsplit_coarse = max(1, round(cfg.dt2 / cfg.dtS2));
+    solver_coarse = decomposition(network.G + network.Cm / dt_coarse, "lu");
+else
+    dt_coarse = dt_fine;
+    Nsplit_coarse = Nsplit_fine;
+    solver_coarse = solver_fine;
+end
 
 %% Axial-to-ID coupling used for the cleft current Icleft
 % Each junction has two disc faces (pre- and post-junctional), each carrying
@@ -61,39 +95,59 @@ for j = 1:Njunction
     end
 end
 
-%% Sampled output
-max_samples = ceil(cfg.T / cfg.sample_dt) + 2;
-time = nan(1, max_samples);
-Vm_cell = nan(Ncell, max_samples);
-phi_axial = nan(Ncell, max_samples);
-Icleft = nan(2, Njunction, max_samples);   % Row 1 = pre-junctional side, row 2 = post-junctional side.
-Vm_ID_mean = nan(2, Njunction, max_samples);
-phi_cleft_mean = nan(Njunction, max_samples);
-S_cleft_mean = nan(4, Njunction, max_samples);
+%% Sampled output buffers (preallocated, grown on demand)
+% Step-based saving: store every cfg.save_every accepted steps. With a fixed
+% step there are about ceil(T/dt) steps; allocate from that and grow the
+% buffers if an adaptive step ever produces more samples than expected.
+save_every = max(1, round(cfg.save_every));
+if use_adaptive
+    % Fine steps within twin plus coarse steps for the rest of each cycle.
+    per_beat = cfg.twin / dt_fine + max(cfg.BCL - cfg.twin, 0) / dt_coarse;
+    nsteps_guess = max(1, ceil(per_beat * (cfg.T / cfg.BCL)));
+else
+    nsteps_guess = max(1, ceil(cfg.T / max(dt_fine, eps)));
+end
+max_samples = ceil(nsteps_guess / save_every) + 2;
 
-Vm = network.Am * phi;
+NG = model.Nstate * Npatches;
+time = nan(1, max_samples);
+phi_axial = nan(Ncell, max_samples);
+Gstate_hist = nan(NG, max_samples);
+Icleft = nan(2, Njunction, max_samples);          % Row 1 = pre-side, row 2 = post-side.
+S_cleft_hist = nan(4, M, Njunction, max_samples);
+
+%% Initial sample (count = 1, t = 0)
 count = 1;
 time(count) = 0;
-Vm_cell(:, count) = Vm(patch.axial);
 phi_axial(:, count) = phi(cell_index);
+Gstate_hist(:, count) = Gstate;
 Icleft(:, :, count) = compute_icleft(phi, ...
     icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
 if Njunction > 0
-    Vm_ID = reshape(Vm(patch.ID(:)), M, 2, Njunction);
-    Vm_ID_mean(:, :, count) = reshape(mean(Vm_ID, 1), 2, Njunction);
-    phi_cleft_mean(:, count) = mean(phi(layout.cleft), 1)';
-    S_cleft_mean(:, :, count) = reshape(mean(S_cleft, 2), 4, Njunction);
+    S_cleft_hist(:, :, :, count) = S_cleft;
 end
-next_sample = cfg.sample_dt;
+
 ti = 0;
+step = 0;
 Iall = [];
 
 %% Main simulation loop
 while ti < cfg.T
-    dt = min(cfg.dt, cfg.T - ti);
-    if abs(dt - cfg.dt) > eps(cfg.dt)
-        system_matrix = network.G + network.Cm / dt;
-        solver = decomposition(system_matrix, "lu");
+    % Adaptive step selection: fine step inside the post-beat window
+    % (mod(t, BCL) < twin), coarse step otherwise.
+    if use_adaptive && mod(ti, cfg.BCL) >= cfg.twin
+        dt = dt_coarse;
+        solver = solver_coarse;
+        Nsplit = Nsplit_coarse;
+    else
+        dt = dt_fine;
+        solver = solver_fine;
+        Nsplit = Nsplit_fine;
+    end
+    % Clip the final step to land exactly on T (refactor once for this step).
+    if dt > cfg.T - ti
+        dt = cfg.T - ti;
+        solver = decomposition(network.G + network.Cm / dt, "lu");
     end
     p.dt = dt;
 
@@ -106,7 +160,7 @@ while ti < cfg.T
         Sp(ID_patches, ion) = values(cleft_index);
     end
 
-    [Gnew, Iion, Ivec, ~, Iall] = ...
+    [Gnew, Iion, Ivec, ~, ~] = ...
         model.ionic_fun(ti, [Vm; Gstate], p, Sp(:));
     Ivec = reshape(Ivec, Npatches, 3);
 
@@ -159,7 +213,7 @@ while ti < cfg.T
     end
 
     source = zeros(Nnodes, 1);
-    source(layout.cleft(:)) = Esource(:);
+    source(layout.cleft(:)) = -Esource(:);
     rhs = network.Cm / dt * phi - network.Am' * Iion + source;
     phi_new = solver \ rhs;
 
@@ -169,25 +223,29 @@ while ti < cfg.T
 
     phi = phi_new;
     Gstate = Gnew;
-    ti = round(ti + dt, 10);
+    ti = round(ti + dt, 5);
+    step = step + 1;
 
-    if ti + 1e-10 >= next_sample || ti >= cfg.T
+    % Cross-step saving: store every save_every accepted steps and the final.
+    if mod(step, save_every) == 0 || ti >= cfg.T
         count = count + 1;
-        Vm = network.Am * phi;
+        if count > size(time, 2)
+            % Grow buffers (robust to adaptive-step runs with extra samples).
+            new_size = 2 * size(time, 2);
+            time(1, new_size) = nan;
+            phi_axial(Ncell, new_size) = nan;
+            Gstate_hist(NG, new_size) = nan;
+            Icleft(2, max(Njunction, 1), new_size) = nan;
+            S_cleft_hist(4, M, max(Njunction, 1), new_size) = nan;
+        end
         time(count) = ti;
-        Vm_cell(:, count) = Vm(patch.axial);
         phi_axial(:, count) = phi(cell_index);
+        Gstate_hist(:, count) = Gstate;
         Icleft(:, :, count) = compute_icleft(phi, ...
             icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
         if Njunction > 0
-            Vm_ID = reshape(Vm(patch.ID(:)), M, 2, Njunction);
-            Vm_ID_mean(:, :, count) = ...
-                reshape(mean(Vm_ID, 1), 2, Njunction);
-            phi_cleft_mean(:, count) = mean(phi(layout.cleft), 1)';
-            S_cleft_mean(:, :, count) = ...
-                reshape(mean(S_cleft, 2), 4, Njunction);
+            S_cleft_hist(:, :, :, count) = S_cleft;
         end
-        next_sample = next_sample + cfg.sample_dt;
     end
 
     if cfg.show_progress && ...
@@ -197,22 +255,12 @@ while ti < cfg.T
     end
 end
 
+%% Retained time histories
 result.time = time(1:count);
-result.Vm_cell = Vm_cell(:, 1:count);
-result.phi_axial = phi_axial(:, 1:count);   % Axial node potential, Ncell-by-Nt.
-result.Icleft = Icleft(:, :, 1:count);      % Cleft current per junction side, 2-by-Njunction-by-Nt.
-result.Vm_ID_mean = Vm_ID_mean(:, :, 1:count);
-result.phi_cleft_mean = phi_cleft_mean(:, 1:count);
-result.S_cleft_mean = S_cleft_mean(:, :, 1:count);
-result.final.phi_cell = reshape(phi(layout.cell), 1, Ncell);
-result.final.phi_ID = reshape(phi(layout.ID), M, 2, Njunction);
-result.final.phi_boundary = nan(network.Nfaces, Ncell);
-result.final.phi_boundary(network.boundary_mask) = ...
-    phi(layout.boundary(network.boundary_mask));
-result.final.phi_cleft = reshape(phi(layout.cleft), M, Njunction);
-result.final.S_cleft = S_cleft;
-result.final.Gstate = Gstate;
-result.final.Iall = Iall;
+result.phi_axial = phi_axial(:, 1:count);          % Axial node potential, Ncell-by-Nt.
+result.Gstate = Gstate_hist(:, 1:count);           % Ionic states (incl. intracellular conc.).
+result.Icleft = Icleft(:, :, 1:count);             % Cleft current per junction side.
+result.S_cleft = S_cleft_hist(:, :, :, 1:count);   % Cleft concentration, 4-by-M-by-Njunction-by-Nt.
 end
 
 function Ic = compute_icleft(phi, icleft_cell, icleft_ID_idx, gmyo, M, Njunction)

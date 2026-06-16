@@ -59,9 +59,19 @@ cfg.Temp = 310;  % K.
 cfg.BCL = 1000;  % Basic cycle length, ms.
 cfg.nbeats = 1;
 cfg.T = [];  % Total time, ms; empty uses BCL*nbeats.
-cfg.dt = 0.01;  % Voltage time step, ms.
-cfg.dtS = cfg.dt/5;  % Cleft concentration time step, ms.
-cfg.sample_dt = 0.1;  % Output sampling interval, ms.
+
+% Adaptive (dual) time step, matching the original 1-D source
+% (run_generic_RCL_multi_mesh.m). Within the first `twin` ms after each
+% beat onset (mod(t, BCL) < twin) the solver uses the fine step dt; for the
+% rest of each cycle it uses the coarse step dt2. Set adaptive_dt = false to
+% use the fine step cfg.dt everywhere.
+cfg.adaptive_dt = true;  % Enable dual fine/coarse time stepping.
+cfg.twin = 50;  % Fine-step window after each beat onset, ms.
+cfg.dt = 0.01;  % Fine voltage time step (used within twin), ms.
+cfg.dt2 = 0.1;  % Coarse voltage time step (used outside twin), ms.
+cfg.dtS = cfg.dt/5;  % Fine cleft concentration time step, ms.
+cfg.dtS2 = cfg.dt2/10;  % Coarse cleft concentration time step, ms.
+cfg.save_every = 10;  % Cross-step saving: store outputs every N accepted steps.
 cfg.stim_cell = 1;  % Cell receiving the stimulus.
 cfg.stim_dur = [];
 cfg.stim_amp = [];
