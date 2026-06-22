@@ -3,6 +3,10 @@ function topology = build_continuum_topology( ...
 %BUILD_CONTINUUM_TOPOLOGY Convert a cell adjacency matrix into graph metadata.
 % Inputs:
 %   adjacency_matrix  symmetric 0/1 Ncell-by-Ncell connectivity matrix.
+%   Example:
+%       [0 1 0;
+%        1 0 1;
+%        0 1 0]
 %   cell_coordinates  optional Ncell-by-1/2/3 plotting coordinates.
 %   cell_port_count   scalar/vector total ID-capable membrane ports per cell.
 
@@ -32,8 +36,13 @@ is_connected = all(component == component(1));
 
 [cell_1, cell_2] = find(triu(adjacency_matrix, 1));
 junction_cells = [cell_1'; cell_2'];
+% [1,2;
+%  2,3]
 Njunction = numel(cell_1);
 degree = full(sum(adjacency_matrix, 2));
+% [1;
+%  2;
+%  1]
 
 if nargin < 3 || isempty(cell_port_count)
     cell_port_count = max(2, degree);
@@ -58,6 +67,19 @@ for junction = 1:Njunction
         junction_ports(side, junction) = next_port(cell_number);
     end
 end
+% junction_ports work with junction_cells
+% junction_cells(:, i_junction) tells us that which 2 cells are connected
+% by ith junction 
+% junction_ports(:, i_junction) tells us that 
+% which membrane port in each of these two cells does this connection occupy?
+% In this case junction_ports = 
+% 1     2
+% 1     1
+% junction_cells = 
+% [1,2;
+%  2,3]
+% This represent 1st cell port 1 connect w/ 2nd cell port 1
+% the 2nd cell port 2 connect w/ 3rd cell port 1
 
 Nports = max(cell_port_count);
 boundary_mask = false(Nports, Ncell);
