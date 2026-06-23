@@ -45,20 +45,20 @@ base_cfg.save_every = 10;
 base_cfg.adaptive_dt = false;
 base_cfg.dt = 0.01;
 base_cfg.dt2 = base_cfg.dt;
-base_cfg.dtS = base_cfg.dt / 5;
-base_cfg.dtS2 = base_cfg.dt2 / 10;
+base_cfg.dtS = base_cfg.dt; %/ 5;
+base_cfg.dtS2 = base_cfg.dt2; %/ 10;
 
 %% Shared protocol timing
 Vrest = -0.879989146999539e2;                 % mV.
-t_rest = 100;                % ms at Vrest before the pulse.
-t_tail = 100;                % ms after the longest pulse.
+t_rest = 20;                % ms at Vrest before the pulse.
+t_tail = 20;                % ms after the longest pulse.
 
 %% Protocol family 1: force the voltage back to Vrest after the pulse.
 release_after_step = false;
 
 cfg_return_one = make_one_cell_cfg( ...
     base_cfg, Vrest, t_rest, 20, 50, t_tail, release_after_step);
-run_voltage_clamp_case( ...
+result = run_voltage_clamp_case( ...
     cfg_return_one, ...
     "return-to-rest, cell 1 clamped", ...
     "voltage_clamp_return_one_cell", ...

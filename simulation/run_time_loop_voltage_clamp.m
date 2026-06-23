@@ -15,7 +15,7 @@ function result = run_time_loop_voltage_clamp(cfg, topology, model, network)
 % Saved time histories (everything else is dropped):
 %   time        1-by-Nt sample times, ms.
 %   phi_axial   Ncell-by-Nt axial (intracellular) node potential, mV.
-%   Gstate      (Nstate*Npatches)-by-Nt ionic state vector. The ORd11/LR1/
+%   Gstate      Nstate-by-Ncell-by-Nt axial ionic state tensor. The ORd11/LR1/
 %               Court98 intracellular concentrations live inside this state,
 %               so intracellular concentration is NOT saved separately.
 %   Icleft      2-by-Njunction-by-Nt cleft (axial-to-ID) current per side.
@@ -113,10 +113,11 @@ else
 end
 max_samples = ceil(nsteps_guess / save_every) + 2;
 
-NG = model.Nstate * Npatches;
+Nstate = model.Nstate;
+axial_patches = patch.axial(:);
 time = nan(1, max_samples);
 phi_axial = nan(Ncell, max_samples);
-Gstate_hist = nan(NG, max_samples);
+Gstate_hist = nan(Nstate, Ncell, max_samples);
 Icleft = nan(2, Njunction, max_samples);          % Row 1 = pre-side, row 2 = post-side.
 S_cleft_hist = nan(4, M, Njunction, max_samples);
 vclamp_command = nan(Ncell, max_samples);
@@ -125,7 +126,8 @@ vclamp_command = nan(Ncell, max_samples);
 count = 1;
 time(count) = 0;
 phi_axial(:, count) = phi(cell_index);
-Gstate_hist(:, count) = Gstate;
+Gstate_hist(:, :, count) = extract_axial_Gstate( ...
+    Gstate, Npatches, Nstate, axial_patches);
 vclamp_command(active_cells0, count) = command0;
 Icleft(:, :, count) = compute_icleft(phi, ...
     icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
@@ -241,14 +243,15 @@ while ti < cfg.T
             new_size = 2 * size(time, 2);
             time(1, new_size) = nan;
             phi_axial(Ncell, new_size) = nan;
-            Gstate_hist(NG, new_size) = nan;
+            Gstate_hist(Nstate, Ncell, new_size) = nan;
             Icleft(2, max(Njunction, 1), new_size) = nan;
             S_cleft_hist(4, M, max(Njunction, 1), new_size) = nan;
             vclamp_command(Ncell, new_size) = nan;
         end
         time(count) = ti;
         phi_axial(:, count) = phi(cell_index);
-        Gstate_hist(:, count) = Gstate;
+        Gstate_hist(:, :, count) = extract_axial_Gstate( ...
+            Gstate, Npatches, Nstate, axial_patches);
         vclamp_command(active_cells, count) = command;
         Icleft(:, :, count) = compute_icleft(phi, ...
             icleft_cell, icleft_ID_idx, gmyo, M, Njunction);
@@ -267,7 +270,7 @@ end
 %% Retained time histories
 result.time = time(1:count);
 result.phi_axial = phi_axial(:, 1:count);          % Axial node potential, Ncell-by-Nt.
-result.Gstate = Gstate_hist(:, 1:count);           % Ionic states (incl. intracellular conc.).
+result.Gstate = Gstate_hist(:, :, 1:count);       % Axial ionic states, Nstate-by-Ncell-by-Nt.
 result.Icleft = Icleft(:, :, 1:count);             % Cleft current per junction side.
 result.S_cleft = S_cleft_hist(:, :, :, 1:count);   % Cleft concentration, 4-by-M-by-Njunction-by-Nt.
 result.vclamp = struct();
@@ -454,4 +457,10 @@ pc = phi(icleft_cell(:)).';                      % 1-by-side_count axial potenti
 sum_phi_ID = sum(phi(icleft_ID_idx), 1);         % 1-by-side_count sum of ID potentials.
 contrib = (gmyo / M) * (M * pc - sum_phi_ID);    % 1-by-side_count.
 Ic = reshape(contrib, 2, Njunction);             % Row = side, column = junction.
+end
+
+function axial_Gstate = extract_axial_Gstate(Gstate, Npatches, Nstate, axial_patches)
+%EXTRACT_AXIAL_GSTATE Return axial ionic states as Nstate-by-Ncell.
+Gstate_by_patch = reshape(Gstate, Npatches, Nstate);
+axial_Gstate = Gstate_by_patch(axial_patches, :).';
 end
