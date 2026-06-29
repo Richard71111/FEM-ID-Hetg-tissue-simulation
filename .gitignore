@@ -1,2 +1,9 @@
-# Generated voltage-clamp data files are too large for GitHub.
-Output/Save data/voltage_clamp_*.mat
+# Output directory — data files, plots, and logs are not tracked in git.
+Output/
+
+# MATLAB auto-generated files
+*.asv
+*.m~
+
+# macOS
+.DS_Store

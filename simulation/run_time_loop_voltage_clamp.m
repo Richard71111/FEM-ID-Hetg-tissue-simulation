@@ -232,8 +232,11 @@ while ti < cfg.T
 
     phi = phi_new;
     Gstate = Gnew;
-    ti = round(ti + dt, 5);
+    ti = ti + dt;
     step = step + 1;
+    if step > 4 * max_samples * save_every
+        error("Step runaway at t=%.6f (T=%.6f).", ti, cfg.T);
+    end
 
     % Cross-step saving: store every save_every accepted steps and the final.
     if mod(step, save_every) == 0 || ti >= cfg.T

@@ -7,8 +7,10 @@ clear;
 clc;
 close all;
 
-project_folder = fileparts(mfilename("fullpath"));
-addpath(project_folder);
+script_folder  = fileparts(mfilename("fullpath"));
+project_folder = fileparts(script_folder);
+addpath(fullfile(project_folder, "main_function"));
+addpath(fullfile(project_folder, "plot_function"));
 addpath(fullfile(project_folder, "config"));
 addpath(fullfile(project_folder, "topology"));
 addpath(fullfile(project_folder, "models"));

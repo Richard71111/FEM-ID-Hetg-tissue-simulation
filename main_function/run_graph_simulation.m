@@ -3,12 +3,14 @@ function result = run_graph_simulation(cfg)
 % Input: optional cfg structure; default_config is used when omitted.
 % Output: result with graph metadata and tensor-shaped physical variables.
 
-project_folder = fileparts(mfilename("fullpath"));
+function_folder = fileparts(mfilename("fullpath"));
+project_folder  = fileparts(function_folder);
 addpath(fullfile(project_folder, "config"));
 addpath(fullfile(project_folder, "topology"));
 addpath(fullfile(project_folder, "models"));
 addpath(fullfile(project_folder, "matrix"));
 addpath(fullfile(project_folder, "simulation"));
+addpath(fullfile(project_folder, "plot_function"));
 
 if nargin < 1
     cfg = default_config();

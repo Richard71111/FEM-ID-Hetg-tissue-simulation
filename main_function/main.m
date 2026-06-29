@@ -4,8 +4,9 @@
 clear;
 clc;
 close all;
-project_folder = fileparts(mfilename("fullpath"));
-
+script_folder  = fileparts(mfilename("fullpath"));
+project_folder = fileparts(script_folder);
+addpath(fullfile(project_folder, "main_function"));
 addpath(fullfile(project_folder, "config"));
 
 cfg = default_config();

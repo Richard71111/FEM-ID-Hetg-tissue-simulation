@@ -18,7 +18,7 @@ cfg.junction_mesh = 1;  % Scalar or one mesh index for each junction.
 %% FEM mesh files
 % The first mesh is the baseline mesh used by the original 1-D code.
 cfg.mesh_folder = fullfile(project_folder, "data","384");
-cfg.mesh_files = ["FEMDATA_1.mat", "FEMDATA_1.mat"];
+cfg.mesh_files = ["FEMDATA_1.mat"];
 cfg.scale_gj_loc = 1;  % Scalar or one GJ localization scale per junction.
 cfg.scale_chan_loc = 1;  % Scalar or one channel scale per junction.
 

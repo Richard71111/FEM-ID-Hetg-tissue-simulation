@@ -3,12 +3,14 @@ function result = run_graph_voltage_clamp_simulation(cfg)
 % This runner mirrors run_graph_simulation but calls the voltage-clamp time
 % loop so the original simulation code remains unchanged.
 
-project_folder = fileparts(mfilename("fullpath"));
+function_folder = fileparts(mfilename("fullpath"));
+project_folder  = fileparts(function_folder);
 addpath(fullfile(project_folder, "config"));
 addpath(fullfile(project_folder, "topology"));
 addpath(fullfile(project_folder, "models"));
 addpath(fullfile(project_folder, "matrix"));
 addpath(fullfile(project_folder, "simulation"));
+addpath(fullfile(project_folder, "plot_function"));
 
 if nargin < 1
     cfg = default_config();
